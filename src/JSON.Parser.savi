@@ -2,7 +2,7 @@
   :var _offset USize: 0
   :var _offset_start USize: 0
 
-  :var source String'box: ""
+  :var source String'val: ""
   :var last_number (I64 | F64): I64[0]
   :var last_string String: ""
 
@@ -270,17 +270,36 @@
     @_pre_token
     yield (if is_key (JSON.Token.KeyPre | JSON.Token.StringPre))
 
-    buf = String.new // TODO: don't allocate here - let the caller construct the string from escape tokens if/when they choose
-    keep_going = True
-    while keep_going (
+    needs_escaping = False
+    while True (
       byte = @_next!
       case byte == (
-      | '"'  | keep_going = False
-      | '\\' | buf = @_push_escape_seq!(buf)
-      | buf.push_byte(byte)
+      | '"'  |
+        break
+      | '\\' |
+        needs_escaping = True
+        break
       )
     )
-    @last_string = buf.clone // TODO: skip clone here by skipping allocating in the first place - see above TODO comment
+    if needs_escaping (
+      buf = String.new
+      buf << @source.trim(@token_start.isize, @token_end.isize - 1)
+      @_push_escape_seq!(buf)
+
+      while True (
+        byte = @_next!
+        case byte == (
+        | '"' | break
+        | '\\' | @_push_escape_seq!(buf)
+        |
+          buf.push_byte(byte)
+        )
+      )
+
+      @last_string = buf.clone // TODO: avoid clone
+    |
+      @last_string = @source.trim(@token_start.isize, @token_end.isize - 1)
+    )
 
     @_rewind
     yield (if is_key (JSON.Token.Key | JSON.Token.String))
@@ -292,7 +311,7 @@
     @_parse_string! -> (token | None)
     @last_string
 
-  :fun ref _push_escape_seq!(buf String'ref) String'ref
+  :fun ref _push_escape_seq!(buf String'ref) None
     case @_next! == (
     | '"'  | buf.push_byte('"')
     | '\\' | buf.push_byte('\\')
@@ -305,7 +324,6 @@
     | 'u'  | buf.push_utf8(@_read_unicode_seq!)
     | error!
     )
-    --buf
 
   :fun ref _read_unicode_seq! U32
     // We've already read the initial "\u" bytes, so start reading the digits.
